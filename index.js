@@ -3,8 +3,8 @@ const { restoreAllSessions } = require('./whatsappClient');
 const { handleAuthCallbacks, handleAuthMessages } = require('./handlers/authHandler');
 const { handleAdminCallbacks, handleAdminMessages } = require('./handlers/adminHandler');
 const { handleGroupCallbacks, handleGroupMessages } = require('./handlers/groupHandler');
-const { handleCtcCallbacks, handleCtcMessages } = require('./handlers/ctcHandler'); // Import CTC handler
-const { handleBlastCallbacks, handleBlastMessages } = require('./handlers/blastHandler'); // Import Blast handler
+const { handleCtcCallbacks, handleCtcMessages } = require('./handlers/ctcHandler');
+const { handleBlastCallbacks, handleBlastMessages } = require('./handlers/blastHandler');
 const { showMainMenu } = require('./handlers/menuHandler');
 const { isOwner, parsePhoneNumbersFromFile } = require('./utils/helpers');
 const config = require('./config');
@@ -56,7 +56,7 @@ bot.onText(/\/start/, async (msg) => {
   await showMainMenu(chatId, bot, userStates);
 });
 
-// Handle callback queries
+// Handle callback queries - FIXED ROUTING ORDER
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
@@ -77,7 +77,24 @@ bot.on('callback_query', async (query) => {
   try {
     console.log(`[DEBUG] Callback data received: ${data} from user ${userId}`);
     
-    // BLAST HANDLER PRIORITAS PERTAMA - YANG BARU!
+    // MAIN MENU HANDLER - PRIORITAS PERTAMA
+    if (data === 'main_menu') {
+      await bot.answerCallbackQuery(query.id);
+      await showMainMenu(chatId, bot, userStates, query.message.message_id);
+      return;
+    }
+    
+    // GROUP HANDLER - PRIORITAS KEDUA (sebelum yang lain)
+    if (data === 'rename_groups' || 
+        data === 'confirm_rename' ||
+        data === 'search_rename_groups' ||
+        data.startsWith('select_base_')) {
+      console.log(`[DEBUG] Routing to Group handler: ${data}`);
+      await handleGroupCallbacks(query, bot, userStates);
+      return;
+    }
+    
+    // BLAST HANDLER
     if (data === 'blast' || 
         data === 'blast_chat' || 
         data === 'blast_file' ||
@@ -88,9 +105,11 @@ bot.on('callback_query', async (query) => {
         data.startsWith('set_delay_')) {
       console.log(`[DEBUG] Routing to Blast handler: ${data}`);
       await handleBlastCallbacks(query, bot, userStates);
+      return;
     }
-    // CTC HANDLER PRIORITAS KEDUA
-    else if (data === 'add_ctc' || 
+    
+    // CTC HANDLER
+    if (data === 'add_ctc' || 
         data === 'add_ctc_chat' || 
         data === 'add_ctc_file' ||
         data === 'confirm_ctc_numbers' ||
@@ -102,46 +121,61 @@ bot.on('callback_query', async (query) => {
         data.startsWith('ctc_groups_page_')) {
       console.log(`[DEBUG] Routing to CTC handler: ${data}`);
       await handleCtcCallbacks(query, bot, userStates);
+      return;
     }
+    
     // AUTH HANDLER
-    else if (data.startsWith('login') || data.startsWith('cancel_login') || data.startsWith('logout') || 
-             data === 'auto_accept' || data === 'toggle_auto_accept' || data === 'status') {
+    if (data === 'login' || 
+        data === 'cancel_login' || 
+        data === 'logout' || 
+        data === 'auto_accept' || 
+        data === 'toggle_auto_accept' || 
+        data === 'status') {
+      console.log(`[DEBUG] Routing to Auth handler: ${data}`);
       await handleAuthCallbacks(query, bot, userStates);
+      return;
     }
+    
     // ADMIN HANDLER
-    else if (data.startsWith('admin_') || data.startsWith('add_promote') || data.startsWith('demote_') || 
-             data.startsWith('toggle_group_') || data.startsWith('groups_page_') || data.startsWith('search_') ||
-             data.startsWith('finish_') || data.startsWith('confirm_') || data.startsWith('cancel_admin') ||
-             data.startsWith('start_search') || data.startsWith('toggle_demote')) {
+    if (data === 'admin_management' ||
+        data === 'add_promote_admin' ||
+        data === 'demote_admin' ||
+        data === 'search_groups' ||
+        data === 'finish_group_selection' ||
+        data === 'start_search_admin' ||
+        data === 'finish_demote_selection' ||
+        data === 'confirm_add_promote' ||
+        data === 'confirm_demote' ||
+        data === 'cancel_admin_flow' ||
+        data.startsWith('toggle_group_') ||
+        data.startsWith('groups_page_') ||
+        data.startsWith('toggle_demote_') ||
+        data.startsWith('demote_page_')) {
+      console.log(`[DEBUG] Routing to Admin handler: ${data}`);
       await handleAdminCallbacks(query, bot, userStates);
+      return;
     }
-    // GROUP HANDLER
-    else if (data.startsWith('rename_') || data.startsWith('select_base_') || data.startsWith('confirm_rename')) {
-      await handleGroupCallbacks(query, bot, userStates);
-    }
-    // MAIN MENU
-    else if (data === 'main_menu') {
-      await showMainMenu(chatId, bot, userStates, query.message.message_id);
-    }
-    else {
-      console.log(`[DEBUG] Unhandled callback data: ${data}`);
-      await bot.sendMessage(chatId, '❌ Command tidak dikenal. Coba lagi ya!');
-    }
+    
+    // FALLBACK - unhandled callback
+    console.log(`[DEBUG] Unhandled callback data: ${data}`);
+    await bot.answerCallbackQuery(query.id);
+    await bot.sendMessage(chatId, '❌ Command tidak dikenal. Coba lagi ya!');
     
   } catch (err) {
     console.error('Error handling callback:', err);
+    
+    // Answer callback query untuk prevent timeout
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (answerErr) {
+      console.warn(`Failed to answer callback query: ${answerErr.message}`);
+    }
+    
     try {
       await bot.sendMessage(chatId, '❌ Terjadi error saat memproses perintah. Coba lagi ya!');
     } catch (sendErr) {
       console.error('Failed to send error message:', sendErr.message);
     }
-  }
-  
-  // Answer callback query with error handling
-  try {
-    await bot.answerCallbackQuery(query.id);
-  } catch (err) {
-    console.warn(`Failed to answer callback query: ${err.message}`);
   }
 });
 
@@ -158,8 +192,13 @@ bot.on('message', async (msg) => {
     // Route messages to appropriate handlers
     let handled = false;
     
-    // Try blast handler first  
-    handled = await handleBlastMessages(msg, bot, userStates);
+    // Try group handler first (untuk rename flow)
+    handled = await handleGroupMessages(msg, bot, userStates);
+    
+    // If not handled by group, try blast handler
+    if (!handled) {
+      handled = await handleBlastMessages(msg, bot, userStates);
+    }
     
     // If not handled by blast, try auth handler
     if (!handled) {
@@ -171,12 +210,7 @@ bot.on('message', async (msg) => {
       handled = await handleAdminMessages(msg, bot, userStates);
     }
     
-    // If not handled by admin, try group handler
-    if (!handled) {
-      handled = await handleGroupMessages(msg, bot, userStates);
-    }
-    
-    // If not handled by group, try CTC handler
+    // If not handled by admin, try CTC handler
     if (!handled) {
       handled = await handleCtcMessages(msg, bot, userStates);
     }
